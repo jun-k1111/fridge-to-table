@@ -69,9 +69,9 @@ ${servingsLine}
 IMPORTANT RULES:
 1. Use ONLY the listed ingredients. You may add a maximum of 3 common pantry staples (salt, black pepper, and/or cooking oil) ONLY if absolutely necessary.
 2. Do not add any other ingredients — the user only has what is listed.
-3. Use Google Search to find a similar established recipe online and cross-reference your cook times, temperatures, and techniques. If your values differ from real-world sources, correct them before responding.
-4. The chefTip field MUST begin with "Culinary best practice:" and cite a technique or fact validated through search. If search returned no results, begin with "Culinary best practice (AI knowledge):" instead.
-5. If search validation was inconclusive, set validationNote to: "Recipe based on AI culinary knowledge — always taste and adjust as you cook"
+3. Draw on your deep culinary training to ensure cook times, temperatures, and techniques are accurate and realistic.
+4. The chefTip field MUST begin with "Culinary best practice:" and share a genuine, specific technique or fact from professional culinary knowledge.
+5. Always set validationNote to: "Recipe based on AI culinary knowledge — always taste and adjust as you cook"
 
 Return your response as a single JSON object with EXACTLY this structure — no markdown fences, no extra text, only the raw JSON object:
 
@@ -206,89 +206,35 @@ export async function POST(request) {
     // OUTCOME: Gemini has all context in one clear message
     const userPrompt = buildUserPrompt(cleanIngredients, safeFilters, Boolean(chefMode));
 
-    // WHAT: Shared contents array used for both the grounded and fallback requests
-    // HOW: Defined once so both model instances can reuse it without duplication
-    // OUTCOME: Prompt is identical whether grounding is used or not
-    const contents = [
-      {
-        role: "user",
-        // WHAT: Wrap the prompt string in a parts array as required by the Gemini API
-        // HOW: parts is an array of content objects; text type holds the prompt string
-        // OUTCOME: Gemini receives the full recipe request in the correct message format
-        parts: [{ text: userPrompt }],
-      },
-    ];
+    // WHAT: Create a single Gemini model instance without grounding tools
+    // HOW: No tools array — uses Gemini's extensive trained culinary knowledge directly
+    // OUTCOME: One API call per request; no grounding quota to exhaust on the free tier
+    const model = genAI.getGenerativeModel({
+      model: MODEL,
+      systemInstruction: buildSystemPrompt(Boolean(chefMode)),
+    });
 
-    // WHAT: Shared system instruction used for both model instances
-    // HOW: Built once from chefMode flag and reused to avoid duplication
-    // OUTCOME: Persona is consistent whether grounding succeeds or falls back
-    const systemInstruction = buildSystemPrompt(Boolean(chefMode));
+    // WHAT: Send the recipe request to Gemini
+    // HOW: generateContent with a single user message containing the full prompt
+    // OUTCOME: Gemini returns a complete structured recipe based on its culinary training
+    console.log("[RECIPE API] Sending request to Gemini (model-only, no grounding)...");
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          // WHAT: Wrap the prompt string in parts array as required by the Gemini API
+          // HOW: parts is an array of content objects; text type holds the prompt string
+          // OUTCOME: Gemini receives the full recipe request in the correct format
+          parts: [{ text: userPrompt }],
+        },
+      ],
+    });
 
-    // WHAT: Attempt recipe generation with Google Search grounding first
-    // HOW: Try/catch wraps the grounded call; 429 rate limit triggers the fallback
-    // OUTCOME: Grounding is used when available; recipe still generates when rate-limited
-    let geminiResponse;
-    let usedSearch = false;
-
-    try {
-      // WHAT: Create a model instance with Google Search grounding enabled
-      // HOW: tools: [{ googleSearch: {} }] enables Gemini to search the web
-      // OUTCOME: Cook times, temperatures, and techniques are cross-referenced against real sources
-      console.log("[RECIPE API] Attempting request with Google Search grounding...");
-      const groundedModel = genAI.getGenerativeModel({
-        model: MODEL,
-        systemInstruction,
-        tools: [{ googleSearch: {} }],
-      });
-
-      const groundedResult = await groundedModel.generateContent({ contents });
-      geminiResponse = groundedResult.response;
-
-      // WHAT: Detect whether Gemini actually used Google Search grounding
-      // HOW: groundingMetadata.webSearchQueries is populated only when search ran
-      // OUTCOME: usedSearch accurately reflects whether real sources were consulted
-      const groundingMeta = geminiResponse.candidates?.[0]?.groundingMetadata;
-      usedSearch = !!(
-        groundingMeta?.webSearchQueries?.length ||
-        groundingMeta?.groundingChunks?.length
-      );
-      console.log("[RECIPE API] Grounded request succeeded. Web search used:", usedSearch);
-
-    } catch (groundingError) {
-      // WHAT: Catch rate limit (429) or quota errors from the grounding call
-      // HOW: Check error status or message to confirm it's a rate/quota issue
-      // OUTCOME: Falls back to a plain (no grounding) Gemini call so the recipe still generates
-      const isRateLimit =
-        groundingError.status === 429 ||
-        groundingError.message?.includes("429") ||
-        groundingError.message?.toLowerCase().includes("quota") ||
-        groundingError.message?.toLowerCase().includes("rate");
-
-      if (isRateLimit) {
-        // WHAT: Log that grounding was skipped due to rate limiting
-        // HOW: console.warn shows in Vercel logs as a warning rather than an error
-        // OUTCOME: Developer knows the fallback triggered; user sees a working recipe
-        console.warn("[RECIPE API] Grounding rate-limited — falling back to model-only generation.");
-
-        // WHAT: Create a second model instance without the Google Search tool
-        // HOW: Omit the tools array so Gemini uses its trained knowledge only
-        // OUTCOME: Recipe is generated from Gemini's culinary knowledge; webValidated stays false
-        const plainModel = genAI.getGenerativeModel({
-          model: MODEL,
-          systemInstruction,
-        });
-
-        const plainResult = await plainModel.generateContent({ contents });
-        geminiResponse = plainResult.response;
-        usedSearch = false;
-
-      } else {
-        // WHAT: Re-throw any non-rate-limit errors so the outer catch handles them
-        // HOW: throw passes the original error up to the catch block below
-        // OUTCOME: Auth errors, network errors, etc. are still caught and returned correctly
-        throw groundingError;
-      }
-    }
+    // WHAT: Extract the response and mark webValidated as false (no grounding used)
+    // HOW: result.response holds the GenerateContentResponse object
+    // OUTCOME: Recipe is clearly flagged as AI knowledge so user knows to taste and adjust
+    const geminiResponse = result.response;
+    const usedSearch = false;
 
     // WHAT: Extract the plain text from whichever Gemini response was used
     // HOW: .text() joins all text parts from the first candidate
