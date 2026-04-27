@@ -30,8 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files — .env.local must never be committed (contains the real API key)
 .env*
+# WHAT: Allow the safe example template to be committed so collaborators know what vars to set
+# HOW: Git negation pattern (!) overrides the .env* rule for this specific file
+# OUTCOME: .env.example is tracked in git; .env.local remains untracked
+!.env.example
 
 # vercel
 .vercel
