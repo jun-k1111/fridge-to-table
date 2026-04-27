@@ -3,10 +3,10 @@
 // OUTCOME: GoogleGenerativeAI class is available to create model instances
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// WHAT: Define the Gemini model — 2.0-flash is confirmed available on the v1beta endpoint
-// HOW: Stored as a constant so it's easy to swap in one place
-// OUTCOME: Every API call uses this model; rate limits are handled by the fallback logic
-const MODEL = "gemini-2.0-flash";
+// WHAT: Use the experimental flash model which has a separate free-tier quota pool
+// HOW: gemini-2.0-flash-exp is available on v1beta and not subject to the same RPD limits
+// OUTCOME: Fresh quota available even when the stable gemini-2.0-flash pool is exhausted
+const MODEL = "gemini-2.0-flash-exp";
 
 // WHAT: Build the system instruction that defines the AI's persona and rules
 // HOW: Returns different text based on whether Chef Mode (Marco Fuoco) is active
