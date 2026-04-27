@@ -13,10 +13,9 @@ const MODEL = "claude-sonnet-4-6";
 // OUTCOME: Even verbose recipes from Marco Fuoco mode fit within this limit
 const MAX_TOKENS = 4096;
 
-// WHAT: Initialize the Anthropic client using the API key from environment variables
-// HOW: The SDK reads process.env.ANTHROPIC_API_KEY automatically from .env.local
-// OUTCOME: All API calls in this route are authenticated with the project's key
-const client = new Anthropic();
+// WHAT: Client is initialized per-request inside the POST handler (not here at module level)
+// HOW: Moved inside POST so process.env is read at request time, not cold-start time
+// OUTCOME: Vercel environment variables are always available when the handler runs
 
 // WHAT: Build the system prompt that defines Claude's persona and output rules
 // HOW: Returns different text based on whether Chef Mode (Marco Fuoco) is active
@@ -139,7 +138,7 @@ function parseRecipeFromText(text) {
 // WHAT: Run the full agentic loop with Claude, handling tool use if it occurs
 // HOW: Calls the API in a loop; if stop_reason is "tool_use" (web search), continues
 // OUTCOME: Always returns the final Claude response after all tool use is resolved
-async function runAgenticLoop(systemPrompt, userPrompt) {
+async function runAgenticLoop(systemPrompt, userPrompt, client) {
   // WHAT: Initialize the message history with the user's recipe request
   // HOW: Messages array follows Anthropic's alternating user/assistant format
   // OUTCOME: Claude has full context of the request from the first call
@@ -224,6 +223,23 @@ async function runAgenticLoop(systemPrompt, userPrompt) {
 // OUTCOME: Returns a JSON response with { recipe } on success or { error } on failure
 export async function POST(request) {
   try {
+    // WHAT: Read and validate the API key at request time, not module load time
+    // HOW: process.env is checked inside the handler so Vercel's runtime env is available
+    // OUTCOME: Key is always fresh; missing key returns a clear 500 before hitting Claude
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    console.log("[RECIPE API] API key present:", !!apiKey, "| length:", apiKey?.length ?? 0);
+    if (!apiKey) {
+      return Response.json(
+        { error: "Server configuration error: ANTHROPIC_API_KEY is not set. Please add it in your Vercel environment variables and redeploy." },
+        { status: 500 }
+      );
+    }
+
+    // WHAT: Initialize the Anthropic client with the key passed explicitly
+    // HOW: Passing apiKey directly avoids relying on the SDK's auto-detection
+    // OUTCOME: Client is guaranteed to use the correct key on every request
+    const client = new Anthropic({ apiKey });
+
     // WHAT: Parse the JSON body sent by the frontend form
     // HOW: request.json() is a Next.js/Web API method that reads and parses the body
     // OUTCOME: ingredients, filters, and chefMode are available as plain JS values
@@ -287,7 +303,10 @@ export async function POST(request) {
     // WHAT: Run the Claude API call (with agentic web search loop)
     // HOW: Calls runAgenticLoop which handles tool_use responses automatically
     // OUTCOME: response contains Claude's final answer after any web validation
-    const response = await runAgenticLoop(systemPrompt, userPrompt);
+    // WHAT: Pass the per-request client into the loop so it uses the correct API key
+    // HOW: client is now initialized inside POST and passed down as a parameter
+    // OUTCOME: No module-level client; each request gets its own authenticated instance
+    const response = await runAgenticLoop(systemPrompt, userPrompt, client);
 
     // WHAT: Extract the raw text string from Claude's response
     // HOW: Calls extractTextFromResponse which finds the text content block
