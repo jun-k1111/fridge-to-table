@@ -3,10 +3,10 @@
 // OUTCOME: GoogleGenerativeAI class is available to create model instances
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// WHAT: Define the Gemini model to use — free-tier compatible, fast, capable
-// HOW: Stored as a constant so it's easy to swap the model in one place
-// OUTCOME: Every API call in this file uses this model consistently
-const MODEL = "gemini-2.0-flash";
+// WHAT: Define the Gemini model — 1.5-flash has 60 RPM on the free tier vs 15 for 2.0-flash
+// HOW: Stored as a constant so it's easy to swap in one place
+// OUTCOME: Higher RPM allowance means far fewer rate-limit errors for free-tier users
+const MODEL = "gemini-1.5-flash";
 
 // WHAT: Build the system instruction that defines the AI's persona and rules
 // HOW: Returns different text based on whether Chef Mode (Marco Fuoco) is active
@@ -350,6 +350,26 @@ export async function POST(request) {
             "API key error — please check that your GEMINI_API_KEY is set correctly in Vercel environment variables.",
         },
         { status: 401 }
+      );
+    }
+
+    // WHAT: Detect rate limit errors — catches 429 from the plain-model fallback call
+    // HOW: Check status code AND error message string since Gemini SDK surfaces both
+    // OUTCOME: User sees a clear "wait and retry" message instead of a raw SDK error
+    const isRateLimit =
+      error.status === 429 ||
+      error.message?.includes("429") ||
+      error.message?.toLowerCase().includes("quota") ||
+      error.message?.toLowerCase().includes("rate limit") ||
+      error.message?.toLowerCase().includes("too many");
+
+    if (isRateLimit) {
+      return Response.json(
+        {
+          error:
+            "Gemini free tier limit reached. Please wait 60 seconds and try again — the free quota resets every minute.",
+        },
+        { status: 429 }
       );
     }
 
