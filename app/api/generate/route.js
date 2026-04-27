@@ -201,49 +201,97 @@ export async function POST(request) {
     // OUTCOME: Authenticated client ready to create model instances
     const genAI = new GoogleGenerativeAI(apiKey);
 
-    // WHAT: Create a Gemini model instance with Google Search grounding enabled
-    // HOW: getGenerativeModel accepts model name, system instruction, and tools array
-    // OUTCOME: Every generateContent call can use Google Search to validate the recipe
-    const model = genAI.getGenerativeModel({
-      model: MODEL,
-      // WHAT: Set the persona/rules system instruction for this request
-      // HOW: systemInstruction is Gemini's equivalent of Anthropic's system prompt
-      // OUTCOME: Gemini responds as a professional chef or as Marco Fuoco
-      systemInstruction: buildSystemPrompt(Boolean(chefMode)),
-      // WHAT: Enable Google Search grounding for real-world recipe validation
-      // HOW: googleSearch tool tells Gemini to search the web before finalizing its answer
-      // OUTCOME: Cook times, temperatures, and techniques are cross-referenced against real sources
-      tools: [{ googleSearch: {} }],
-    });
-
     // WHAT: Build the full user prompt with ingredients and all filter preferences
     // HOW: Calls the helper that formats everything into one detailed request string
     // OUTCOME: Gemini has all context in one clear message
     const userPrompt = buildUserPrompt(cleanIngredients, safeFilters, Boolean(chefMode));
 
-    // WHAT: Send the recipe generation request to Gemini
-    // HOW: generateContent accepts a contents array with role/parts structure
-    // OUTCOME: Gemini generates the recipe, optionally searches Google, and returns a response
-    console.log("[RECIPE API] Sending request to Gemini...");
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          // WHAT: Wrap the prompt string in a parts array as required by the Gemini API
-          // HOW: parts is an array of content objects; text type holds the prompt string
-          // OUTCOME: Gemini receives the full recipe request in the correct message format
-          parts: [{ text: userPrompt }],
-        },
-      ],
-    });
+    // WHAT: Shared contents array used for both the grounded and fallback requests
+    // HOW: Defined once so both model instances can reuse it without duplication
+    // OUTCOME: Prompt is identical whether grounding is used or not
+    const contents = [
+      {
+        role: "user",
+        // WHAT: Wrap the prompt string in a parts array as required by the Gemini API
+        // HOW: parts is an array of content objects; text type holds the prompt string
+        // OUTCOME: Gemini receives the full recipe request in the correct message format
+        parts: [{ text: userPrompt }],
+      },
+    ];
 
-    // WHAT: Extract the response object from the Gemini result
-    // HOW: result.response holds the GenerateContentResponse with all candidate data
-    // OUTCOME: We can call .text() and inspect grounding metadata on this object
-    const geminiResponse = result.response;
+    // WHAT: Shared system instruction used for both model instances
+    // HOW: Built once from chefMode flag and reused to avoid duplication
+    // OUTCOME: Persona is consistent whether grounding succeeds or falls back
+    const systemInstruction = buildSystemPrompt(Boolean(chefMode));
 
-    // WHAT: Extract the plain text from Gemini's response
-    // HOW: .text() is a convenience method that joins all text parts from the first candidate
+    // WHAT: Attempt recipe generation with Google Search grounding first
+    // HOW: Try/catch wraps the grounded call; 429 rate limit triggers the fallback
+    // OUTCOME: Grounding is used when available; recipe still generates when rate-limited
+    let geminiResponse;
+    let usedSearch = false;
+
+    try {
+      // WHAT: Create a model instance with Google Search grounding enabled
+      // HOW: tools: [{ googleSearch: {} }] enables Gemini to search the web
+      // OUTCOME: Cook times, temperatures, and techniques are cross-referenced against real sources
+      console.log("[RECIPE API] Attempting request with Google Search grounding...");
+      const groundedModel = genAI.getGenerativeModel({
+        model: MODEL,
+        systemInstruction,
+        tools: [{ googleSearch: {} }],
+      });
+
+      const groundedResult = await groundedModel.generateContent({ contents });
+      geminiResponse = groundedResult.response;
+
+      // WHAT: Detect whether Gemini actually used Google Search grounding
+      // HOW: groundingMetadata.webSearchQueries is populated only when search ran
+      // OUTCOME: usedSearch accurately reflects whether real sources were consulted
+      const groundingMeta = geminiResponse.candidates?.[0]?.groundingMetadata;
+      usedSearch = !!(
+        groundingMeta?.webSearchQueries?.length ||
+        groundingMeta?.groundingChunks?.length
+      );
+      console.log("[RECIPE API] Grounded request succeeded. Web search used:", usedSearch);
+
+    } catch (groundingError) {
+      // WHAT: Catch rate limit (429) or quota errors from the grounding call
+      // HOW: Check error status or message to confirm it's a rate/quota issue
+      // OUTCOME: Falls back to a plain (no grounding) Gemini call so the recipe still generates
+      const isRateLimit =
+        groundingError.status === 429 ||
+        groundingError.message?.includes("429") ||
+        groundingError.message?.toLowerCase().includes("quota") ||
+        groundingError.message?.toLowerCase().includes("rate");
+
+      if (isRateLimit) {
+        // WHAT: Log that grounding was skipped due to rate limiting
+        // HOW: console.warn shows in Vercel logs as a warning rather than an error
+        // OUTCOME: Developer knows the fallback triggered; user sees a working recipe
+        console.warn("[RECIPE API] Grounding rate-limited — falling back to model-only generation.");
+
+        // WHAT: Create a second model instance without the Google Search tool
+        // HOW: Omit the tools array so Gemini uses its trained knowledge only
+        // OUTCOME: Recipe is generated from Gemini's culinary knowledge; webValidated stays false
+        const plainModel = genAI.getGenerativeModel({
+          model: MODEL,
+          systemInstruction,
+        });
+
+        const plainResult = await plainModel.generateContent({ contents });
+        geminiResponse = plainResult.response;
+        usedSearch = false;
+
+      } else {
+        // WHAT: Re-throw any non-rate-limit errors so the outer catch handles them
+        // HOW: throw passes the original error up to the catch block below
+        // OUTCOME: Auth errors, network errors, etc. are still caught and returned correctly
+        throw groundingError;
+      }
+    }
+
+    // WHAT: Extract the plain text from whichever Gemini response was used
+    // HOW: .text() joins all text parts from the first candidate
     // OUTCOME: rawText is the string containing the JSON recipe object
     const rawText = geminiResponse.text();
     console.log("[RECIPE API] Raw Gemini response (first 500 chars):", rawText.slice(0, 500));
@@ -260,18 +308,8 @@ export async function POST(request) {
     // OUTCOME: recipe is a plain JavaScript object ready to return to the frontend
     const recipe = parseRecipeFromText(rawText);
 
-    // WHAT: Detect whether Gemini used Google Search grounding during generation
-    // HOW: groundingMetadata.webSearchQueries is populated when search was used
-    // OUTCOME: webValidated accurately reflects whether real sources were consulted
-    const groundingMeta =
-      geminiResponse.candidates?.[0]?.groundingMetadata;
-    const usedSearch = !!(
-      groundingMeta?.webSearchQueries?.length ||
-      groundingMeta?.groundingChunks?.length
-    );
-
-    // WHAT: Override the recipe's webValidated field with what actually happened
-    // HOW: Direct property assignment overwrites whatever Gemini put in the JSON
+    // WHAT: Set webValidated based on whether grounding actually ran
+    // HOW: usedSearch was set in the try/catch block above
     // OUTCOME: webValidated is always accurate — not just what the model claimed
     recipe.webValidated = usedSearch;
 
@@ -312,19 +350,6 @@ export async function POST(request) {
             "API key error — please check that your GEMINI_API_KEY is set correctly in Vercel environment variables.",
         },
         { status: 401 }
-      );
-    }
-
-    // WHAT: Detect rate limit errors (free tier has per-minute limits)
-    // HOW: Gemini returns 429 when the rate limit is exceeded
-    // OUTCOME: User sees a friendly "try again shortly" message
-    if (error.status === 429) {
-      return Response.json(
-        {
-          error:
-            "Too many requests — the free tier rate limit was hit. Please wait a few seconds and try again.",
-        },
-        { status: 429 }
       );
     }
 
