@@ -1,0 +1,99 @@
+/* WHAT: Import Tailwind CSS framework for utility-class styling
+   HOW: Uses the v4 @import syntax which auto-discovers all utilities
+   OUTCOME: All Tailwind classes are available throughout the app */
+@import "tailwindcss";
+
+/* WHAT: Define the food-inspired color palette as CSS custom properties
+   HOW: :root scopes variables globally so every component can access them
+   OUTCOME: Consistent warm green/orange palette across the entire UI */
+:root {
+  --color-brand-green-deep:  #1b4332; /* dark forest green — headers, primary buttons */
+  --color-brand-green-mid:   #2d6a4f; /* medium green — hover states */
+  --color-brand-green-light: #d8f3dc; /* pale green — chip backgrounds */
+  --color-brand-orange:      #e76f51; /* warm orange — chef mode, CTAs */
+  --color-brand-orange-light:#fff0eb; /* pale orange — chef mode card bg */
+  --color-page-bg:           #fef9ef; /* warm off-white — page background */
+  --color-card-bg:           #ffffff; /* pure white — recipe cards */
+  --color-text-primary:      #1a1a1a; /* near-black — body text */
+  --color-text-muted:        #6b7280; /* gray — subtitles, labels */
+  --color-border:            #e5e7eb; /* light gray — card borders */
+}
+
+/* WHAT: Apply the warm background color to every page
+   HOW: Sets background on the html element so it covers scroll overruns
+   OUTCOME: No bright white flash on load; consistent warm feel */
+html {
+  background-color: var(--color-page-bg);
+  color: var(--color-text-primary);
+  font-family: ui-sans-serif, system-ui, Arial, sans-serif;
+}
+
+/* WHAT: Style the custom ingredient chip tag shape
+   HOW: Inline-flex with rounded-full and padding produces a pill shape
+   OUTCOME: Each added ingredient looks like a distinct, removable badge */
+.ingredient-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  background-color: var(--color-brand-green-light);
+  color: var(--color-brand-green-deep);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+/* WHAT: Animate the loading spinner icon
+   HOW: CSS @keyframes rotate 360° in 0.8s on an infinite loop
+   OUTCOME: A smooth spinning animation for the loading state */
+@keyframes spin-smooth {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.spin {
+  animation: spin-smooth 0.8s linear infinite;
+  display: inline-block;
+}
+
+/* WHAT: Fade-in animation for the recipe card appearing
+   HOW: Keyframe animates opacity 0→1 and a small upward translate
+   OUTCOME: Recipe card slides gently into view rather than snapping */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.fade-up {
+  animation: fade-up 0.4s ease-out forwards;
+}
+
+/* WHAT: Pulse animation used on the "Generate Recipe" button during hover
+   HOW: Scale transform gives a subtle breathing effect on active button
+   OUTCOME: Button feels alive and responsive to pointer interaction */
+@keyframes gentle-pulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.02); }
+}
+
+/* WHAT: Chef Mode glow effect — makes the interface feel intense and dramatic
+   HOW: Box-shadow with orange color pulses in and out on repeat
+   OUTCOME: The UI visually signals that Marco Fuoco mode is active */
+@keyframes chef-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 111, 81, 0); }
+  50%       { box-shadow: 0 0 18px 4px rgba(231, 111, 81, 0.35); }
+}
+
+.chef-mode-active {
+  animation: chef-glow 2.5s ease-in-out infinite;
+}
+
+/* WHAT: Style the cooking-mode step display for full readability
+   HOW: Large font, generous padding, centered layout for distraction-free cooking
+   OUTCOME: One step at a time is easy to read from arm's length at a stovetop */
+.cooking-step {
+  font-size: 1.25rem;
+  line-height: 1.8;
+  text-align: center;
+  padding: 2rem 1rem;
+}
